@@ -1,0 +1,29 @@
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Build output ──────────────────────────────────────────────────────────────
+build/
+.svelte-kit/
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── OS / editor noise ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Subagent-driven-development scratch (ledger, briefs, review packages) ─────
+.superpowers/
+
+# ── Generated route cache / backups ───────────────────────────────────────────
+route-backups/

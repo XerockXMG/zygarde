@@ -1,0 +1,40 @@
+services:
+  zygarde:
+    image: xerock/zygarde:latest
+    # To build from source instead of pulling, replace the line above with:
+    #   build: .
+    container_name: zygarde
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - route-backups:/app/route-backups
+      # Optional custom favicon — also set FAVICON_PATH=/app/custom/favicon.ico in .env
+      # - ./favicon.ico:/app/custom/favicon.ico:ro
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
+  mariadb:
+    image: mariadb:11
+    container_name: zygarde-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: change-me-root-password
+      MARIADB_DATABASE: zygarde
+      MARIADB_USER: zygarde
+      MARIADB_PASSWORD: change-me-db-password
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  mariadb_data:
+  route-backups:

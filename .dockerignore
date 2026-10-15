@@ -1,0 +1,31 @@
+# Dependencies (reinstalled inside the image)
+node_modules/
+
+# Build output (generated inside the image)
+build/
+.svelte-kit/
+
+# Secrets — never bake these into the image
+.env
+.env.*
+!.env.example
+
+# Runtime data
+route-backups/
+*.log
+logs/
+
+# Design docs — not needed inside the image
+docs/
+
+# Dev/tooling noise
+.git/
+.gitignore
+.claude/
+.superpowers/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

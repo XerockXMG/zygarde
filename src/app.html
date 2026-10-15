@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		%zygarde.head%
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<style>
+			*,
+			*::before,
+			*::after {
+				box-sizing: border-box;
+			}
+			/* Shared type scale and text colours. Components use these instead of
+			   raw values so text stays legible: nothing below 13px, and every
+			   text colour meets WCAG AA contrast on the app's dark surfaces. */
+			:root {
+				--text-xs: 0.8125rem;
+				--text-sm: 0.875rem;
+				--text-md: 1rem;
+				--text-lg: 1.125rem;
+				--text-xl: 1.375rem;
+				--text-2xl: 1.75rem;
+				--text-display: 2.5rem;
+
+				--text: #e2e8f0;
+				--text-secondary: #a3b1c6;
+				--text-muted: #8a97ad;
+
+				--accent: #38bdf8;
+				--accent-soft: #7dd3fc;
+				--success: #34d399;
+				--danger: #f87171;
+				--danger-soft: #fca5a5;
+				--warning: #fbbf24;
+				--token: #f59e0b;
+				--violet: #a78bfa;
+				--violet-soft: #c4b5fd;
+				--rose: #fb7185;
+			}
+			html,
+			body {
+				margin: 0;
+				background: #070b14;
+				color: var(--text);
+				font-family: system-ui, sans-serif;
+				font-size: var(--text-md);
+				line-height: 1.45;
+			}
+			/* Scrollbars match the dark panels instead of the OS default. */
+			* {
+				scrollbar-width: thin;
+				scrollbar-color: #2a3a5c transparent;
+			}
+			::-webkit-scrollbar {
+				width: 8px;
+				height: 8px;
+			}
+			::-webkit-scrollbar-track {
+				background: transparent;
+			}
+			::-webkit-scrollbar-thumb {
+				background: #2a3a5c;
+				border-radius: 8px;
+				border: 2px solid transparent;
+				background-clip: padding-box;
+			}
+			::-webkit-scrollbar-thumb:hover {
+				background: #3b4f78;
+				background-clip: padding-box;
+			}
+			::-webkit-scrollbar-corner {
+				background: transparent;
+			}
+		</style>
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>
