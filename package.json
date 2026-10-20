@@ -1,6 +1,6 @@
 {
 	"name": "zygarde",
-	"version": "2.8.0",
+	"version": "2.9.0",
 	"description": "Area management and Discord community voting dashboard for Dragonite scanners",
 	"license": "AGPL-3.0-only",
 	"repository": {
