@@ -11,9 +11,18 @@
 	 * permission logic, none of which applies here.
 	 */
 	import 'leaflet/dist/leaflet.css';
-	import { onMount } from 'svelte';
+	import '$lib/features/map/editHandles.css';
+	import { invalidateAll } from '$app/navigation';
+	import { onMount, untrack } from 'svelte';
 	import type * as Leaflet from 'leaflet';
-	import { geoJsonToLatLngs } from '$lib/features/map/geometry';
+	import {
+		geoJsonToLatLngs,
+		latLngsToGeoJson,
+		canVisuallyEditPolygon
+	} from '$lib/features/map/geometry';
+	import { VertexEditor } from '$lib/features/map/vertexEditor';
+	import { postForm } from '$lib/utils/postForm';
+	import type { LatLngTuple } from '$lib/features/map/types';
 	import { COLORS } from '$lib/features/map/colors';
 	import type { AdminAreaRequest } from '$lib/features/area-requests/server/requests';
 	import type { AreaMapSummary } from '$lib/features/area-requests/types';
@@ -38,6 +47,68 @@
 	let bgGroup: Leaflet.LayerGroup | null = null;
 	let highlightGroup: Leaflet.LayerGroup | null = null;
 	let mapReady = $state(false);
+
+	let editor: VertexEditor | null = null;
+	// Plain (non-reactive) id of the request being edited.
+	let editingId: number | null = null;
+	let editing = $state(false);
+	let saving = $state(false);
+	let vertexCount = $state(0);
+
+	const canEditRequest = $derived(selected?.status === 'pending' && selected.type === 'addition');
+	const polygonEditable = $derived.by(() => {
+		if (!selected) return false;
+		try {
+			return canVisuallyEditPolygon(JSON.parse(selected.geofence));
+		} catch {
+			return false;
+		}
+	});
+
+	function stopEditing(): void {
+		editor?.destroy();
+		editor = null;
+		editing = false;
+		editingId = null;
+		saving = false;
+		drawHighlight();
+	}
+
+	function startEditing(): void {
+		if (!L || !map || !selected || !polygonEditable) return;
+		const ring = geoJsonToLatLngs(JSON.parse(selected.geofence))[0];
+		highlightGroup?.clearLayers();
+		const snapRings: LatLngTuple[][] = areas.flatMap((a) => geoJsonToLatLngs(a.geofence));
+		vertexCount = ring.length;
+		editor = new VertexEditor(L, map, {
+			vertices: ring,
+			snapRings,
+			onChange: (v) => (vertexCount = v.length)
+		});
+		editingId = selected.id;
+		editing = true;
+	}
+
+	async function saveEdit(): Promise<void> {
+		if (!editor || !selected || saving) return;
+		saving = true;
+		try {
+			const result = await postForm('?/updateRequestGeofence', {
+				id: String(selected.id),
+				geofence: JSON.stringify(latLngsToGeoJson(editor.vertices))
+			});
+			if (!result.ok) {
+				alert(result.message ?? 'Failed to save the geofence.');
+				return;
+			}
+			await invalidateAll();
+			stopEditing();
+		} catch {
+			alert('Failed to save the geofence.');
+		} finally {
+			saving = false;
+		}
+	}
 
 	function drawBackground(): void {
 		if (!L || !bgGroup) return;
@@ -151,6 +222,8 @@
 
 		return () => {
 			disposed = true;
+			editor?.destroy();
+			editor = null;
 			ro?.disconnect();
 			map?.remove();
 		};
@@ -161,14 +234,55 @@
 		if (mapReady) drawBackground();
 	});
 
+	// Reactive reads: selected (via selected?.id / selected?.geofence) and mapReady.
+	// Everything else runs untracked, so toggling `editing` or whatever
+	// drawHighlight reads never re-triggers this. A re-created `selected` object
+	// with the same id and geofence (unrelated invalidation) does re-run it, which
+	// is harmless: mid-edit the same-id guard leaves the editor alone, otherwise
+	// it just redraws the same highlight.
 	$effect(() => {
-		void selected;
-		if (mapReady) drawHighlight();
+		const id = selected?.id ?? null;
+		void selected?.geofence;
+		if (!mapReady) return;
+		untrack(() => {
+			// Same request still being edited (e.g. our own save refreshing its
+			// geofence): leave the editor alone; stopEditing() redraws afterwards.
+			if (editing && id === editingId) return;
+			if (editing)
+				stopEditing(); // different request selected: cancel (also redraws)
+			else drawHighlight();
+		});
 	});
 </script>
 
 <div class="map-wrap">
 	<div class="map-el" bind:this={mapEl}></div>
+	{#if canEditRequest}
+		<div class="edit-bar">
+			{#if editing}
+				<span class="edit-count">{vertexCount} points</span>
+				<span class="edit-hint">
+					drag to move · right-click to delete · click/drag midpoints to add
+				</span>
+				<button type="button" class="btn btn-success btn-sm" disabled={saving} onclick={saveEdit}>
+					{saving ? 'Saving…' : 'Save'}
+				</button>
+				<button type="button" class="btn btn-sm" disabled={saving} onclick={stopEditing}>
+					Cancel
+				</button>
+			{:else}
+				<button
+					type="button"
+					class="btn btn-sm"
+					disabled={!polygonEditable}
+					title={polygonEditable ? undefined : 'Only single polygons can be edited on the map'}
+					onclick={startEditing}
+				>
+					Edit geofence
+				</button>
+			{/if}
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -180,6 +294,28 @@
 		border: 1px solid #1a2540;
 		border-radius: 12px;
 		overflow: hidden;
+	}
+
+	.edit-bar {
+		position: absolute;
+		top: 10px;
+		right: 10px;
+		z-index: 1000;
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		max-width: calc(100% - 20px);
+		gap: 8px;
+		padding: 6px 10px;
+		background: #0d1425;
+		border: 1px solid #1a2540;
+		border-radius: 8px;
+		color: var(--text);
+		font-size: 0.8rem;
+	}
+
+	.edit-hint {
+		opacity: 0.7;
 	}
 
 	.map-el {

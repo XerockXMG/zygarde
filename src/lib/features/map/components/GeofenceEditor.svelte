@@ -9,6 +9,7 @@
 	 * Rendered inside MapPanel's .map-wrap, which already has
 	 * position: relative for this absolute positioning to work.
 	 */
+	import '../editHandles.css';
 	import { editState } from '../stores/editState.svelte';
 	import { mapState } from '../stores/mapState.svelte';
 	import type { MapData } from '../types';
@@ -179,45 +180,5 @@
 	.btn-save-edit:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
-	}
-
-	/* Vertex and midpoint marker overrides (global — Leaflet uses its own DOM) */
-	:global(.vertex-handle) {
-		background: #fbbf24;
-		border: 2px solid #fff;
-		border-radius: 50%;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-		cursor: grab !important;
-		transition: transform 0.1s;
-	}
-
-	:global(.vertex-handle:hover) {
-		transform: scale(1.45);
-	}
-
-	:global(.leaflet-marker-draggable.vertex-handle),
-	:global(.leaflet-marker-draggable .vertex-handle) {
-		cursor: grab !important;
-	}
-
-	:global(.leaflet-dragging .vertex-handle) {
-		cursor: grabbing !important;
-		transform: scale(1.3);
-	}
-
-	:global(.midpoint-handle) {
-		background: rgba(251, 191, 36, 0.4);
-		border: 1.5px dashed rgba(255, 255, 255, 0.8);
-		border-radius: 50%;
-		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-		cursor: cell !important;
-		transition:
-			transform 0.1s,
-			background 0.1s;
-	}
-
-	:global(.midpoint-handle:hover) {
-		background: rgba(251, 191, 36, 0.85);
-		transform: scale(1.5);
 	}
 </style>

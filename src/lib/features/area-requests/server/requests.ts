@@ -14,6 +14,10 @@ export interface RequestSummary {
 	adminNote: string | null;
 	submittedAt: string;
 	resolvedAt: string | null;
+	isTemporary: boolean;
+	/** YYYY-MM-DD, set only when isTemporary. */
+	startsOn: string | null;
+	expiresOn: string | null;
 }
 
 export interface AdminAreaRequest extends RequestSummary {
@@ -33,6 +37,7 @@ export interface SubmitRequestParams {
 	userNote: string;
 	discordId: string;
 	username: string;
+	temporary: { startsOn: string; expiresOn: string } | null;
 }
 
 export async function submitRequest(
@@ -41,8 +46,9 @@ export async function submitRequest(
 ): Promise<void> {
 	await executor.execute(
 		`INSERT INTO area_requests
-		 (type, geofence, existing_area_id, existing_area_name, user_note, discord_id, username)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		 (type, geofence, existing_area_id, existing_area_name, user_note, discord_id, username,
+		  is_temporary, starts_on, expires_on)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			params.type,
 			params.geofence,
@@ -50,7 +56,10 @@ export async function submitRequest(
 			params.existingAreaName,
 			params.userNote,
 			params.discordId,
-			params.username
+			params.username,
+			params.temporary ? 1 : 0,
+			params.temporary?.startsOn ?? null,
+			params.temporary?.expiresOn ?? null
 		]
 	);
 }
@@ -68,6 +77,9 @@ interface MyRequestRow {
 	admin_note: string | null;
 	submitted_at: Date | string;
 	resolved_at: Date | string | null;
+	is_temporary: number;
+	starts_on: string | null;
+	expires_on: string | null;
 }
 
 function toRequestSummary(row: MyRequestRow): RequestSummary {
@@ -79,7 +91,10 @@ function toRequestSummary(row: MyRequestRow): RequestSummary {
 		userNote: row.user_note,
 		adminNote: row.admin_note,
 		submittedAt: toDateString(row.submitted_at),
-		resolvedAt: row.resolved_at ? toDateString(row.resolved_at) : null
+		resolvedAt: row.resolved_at ? toDateString(row.resolved_at) : null,
+		isTemporary: Boolean(row.is_temporary),
+		startsOn: row.starts_on,
+		expiresOn: row.expires_on
 	};
 }
 
@@ -88,7 +103,9 @@ export async function listMyRequests(
 	discordId: string
 ): Promise<RequestSummary[]> {
 	const [rows] = await executor.execute<MyRequestRow[]>(
-		`SELECT id, type, status, existing_area_name, user_note, admin_note, submitted_at, resolved_at
+		`SELECT id, type, status, existing_area_name, user_note, admin_note, submitted_at, resolved_at,
+		        is_temporary, DATE_FORMAT(starts_on, '%Y-%m-%d') AS starts_on,
+		        DATE_FORMAT(expires_on, '%Y-%m-%d') AS expires_on
 		 FROM area_requests
 		 WHERE discord_id = ?
 		 ORDER BY submitted_at DESC`,
@@ -124,6 +141,9 @@ interface AdminRequestRow {
 	resolved_at: Date | string | null;
 	resolved_by_username: string | null;
 	created_area_id: number | null;
+	is_temporary: number;
+	starts_on: string | null;
+	expires_on: string | null;
 }
 
 function toAdminAreaRequest(row: AdminRequestRow): AdminAreaRequest {
@@ -141,7 +161,10 @@ function toAdminAreaRequest(row: AdminRequestRow): AdminAreaRequest {
 		submittedAt: toDateString(row.submitted_at),
 		resolvedAt: row.resolved_at ? toDateString(row.resolved_at) : null,
 		resolvedByUsername: row.resolved_by_username,
-		createdAreaId: row.created_area_id
+		createdAreaId: row.created_area_id,
+		isTemporary: Boolean(row.is_temporary),
+		startsOn: row.starts_on,
+		expiresOn: row.expires_on
 	};
 }
 
@@ -154,7 +177,9 @@ export async function listRequestsForAdmin(
 	const [rows] = await executor.execute<AdminRequestRow[]>(
 		`SELECT id, type, status, geofence, existing_area_id, existing_area_name,
 		        user_note, admin_note, discord_id, username, submitted_at,
-		        resolved_at, resolved_by_username, created_area_id
+		        resolved_at, resolved_by_username, created_area_id, is_temporary,
+		        DATE_FORMAT(starts_on, '%Y-%m-%d') AS starts_on,
+		        DATE_FORMAT(expires_on, '%Y-%m-%d') AS expires_on
 		 FROM area_requests ${whereClause}
 		 ORDER BY submitted_at DESC`,
 		params
@@ -188,6 +213,10 @@ export interface PendingRequestRow {
 	discord_id: string;
 	existing_area_id: number | null;
 	geofence: string;
+	is_temporary: number;
+	starts_on: string | null;
+	expires_on: string | null;
+	username: string;
 }
 
 export async function getRequestById(
@@ -195,7 +224,10 @@ export async function getRequestById(
 	id: number
 ): Promise<PendingRequestRow | null> {
 	const [rows] = await executor.execute<PendingRequestRow[]>(
-		'SELECT type, status, discord_id, existing_area_id, geofence FROM area_requests WHERE id = ?',
+		`SELECT type, status, discord_id, existing_area_id, geofence, is_temporary,
+		        DATE_FORMAT(starts_on, '%Y-%m-%d') AS starts_on,
+		        DATE_FORMAT(expires_on, '%Y-%m-%d') AS expires_on, username
+		 FROM area_requests WHERE id = ?`,
 		[id]
 	);
 	return rows[0] ?? null;
@@ -233,4 +265,21 @@ export async function approveAsCreated(
 		 WHERE id = ?`,
 		[adminNote, resolvedByDiscordId, resolvedByUsername, createdAreaId, id]
 	);
+}
+
+/**
+ * Replace the geofence of a request that is still a pending addition. The
+ * status/type guard in the WHERE makes this safe against a concurrent resolve;
+ * returns false when no row matched.
+ */
+export async function updatePendingAdditionGeofence(
+	executor: QueryExecutor,
+	id: number,
+	geofence: string
+): Promise<boolean> {
+	const [result] = await executor.execute<{ affectedRows: number }>(
+		"UPDATE area_requests SET geofence = ? WHERE id = ? AND status = 'pending' AND type = 'addition'",
+		[geofence, id]
+	);
+	return result.affectedRows > 0;
 }

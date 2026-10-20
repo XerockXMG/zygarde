@@ -9,7 +9,8 @@ import {
 	findSnap,
 	geoJsonToLatLngs,
 	isValidPolygonGeoJson,
-	latLngsToGeoJson
+	latLngsToGeoJson,
+	removeVertex
 } from './geometry';
 
 describe('calcAreaSqKm', () => {
@@ -450,5 +451,45 @@ describe('canVisuallyEditPolygon', () => {
 				]
 			})
 		).toBe(false);
+	});
+});
+
+describe('removeVertex', () => {
+	const square: [number, number][] = [
+		[0, 0],
+		[0, 1],
+		[1, 1],
+		[1, 0]
+	];
+
+	it('removes the vertex at the given index when 4 remain', () => {
+		expect(removeVertex(square, 1)).toEqual([
+			[0, 0],
+			[1, 1],
+			[1, 0]
+		]);
+	});
+
+	it('removes the first and last vertex correctly', () => {
+		expect(removeVertex(square, 0)).toEqual([
+			[0, 1],
+			[1, 1],
+			[1, 0]
+		]);
+		expect(removeVertex(square, 3)).toEqual([
+			[0, 0],
+			[0, 1],
+			[1, 1]
+		]);
+	});
+
+	it('returns null when removal would leave fewer than 3 vertices', () => {
+		expect(removeVertex(square.slice(0, 3), 0)).toBeNull();
+	});
+
+	it('does not mutate the input array', () => {
+		const vertices = [...square];
+		removeVertex(vertices, 2);
+		expect(vertices).toEqual(square);
 	});
 });

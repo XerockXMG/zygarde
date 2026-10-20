@@ -119,7 +119,10 @@ class RequestStateClass {
 		}, 700);
 	}
 
-	async submitRequest(note: string): Promise<boolean> {
+	async submitRequest(
+		note: string,
+		temporary: { startsOn: string; expiresOn: string } | null = null
+	): Promise<boolean> {
 		const geofence = this.finalGeofence;
 		if (!geofence) {
 			this.submitError = 'Draw or select a geofence first.';
@@ -138,7 +141,10 @@ class RequestStateClass {
 				geofence: JSON.stringify(geofence),
 				...(this.selectedAreaId != null ? { existingAreaId: String(this.selectedAreaId) } : {}),
 				...(this.selectedAreaName ? { existingAreaName: this.selectedAreaName } : {}),
-				note
+				note,
+				...(temporary && this.requestType === 'addition'
+					? { temporary: '1', startsOn: temporary.startsOn, expiresOn: temporary.expiresOn }
+					: {})
 			});
 			if (!result.ok) {
 				this.submitError = result.message ?? 'Submission failed';

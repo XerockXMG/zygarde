@@ -10,27 +10,52 @@
 	import { requestState } from '../stores/requestState.svelte';
 	import { editState } from '$lib/features/map/stores/editState.svelte';
 	import type { RequestSummary } from '$lib/features/area-requests/server/requests';
+	import { addDays, todayInZone } from '$lib/features/area-requests/dates';
 
 	let { myRequests, loggedIn }: { myRequests: RequestSummary[]; loggedIn: boolean } = $props();
 
 	let note = $state('');
+	let isTemporary = $state(false);
+	let startsOn = $state('');
+	let expiresOn = $state('');
+
+	// Only a convenience for the date inputs' min; the server is the real validator.
+	const localToday = todayInZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+	const endMin = $derived(addDays(startsOn || localToday, 1));
+	const temporaryActive = $derived(isTemporary && requestState.requestType === 'addition');
 
 	$effect(() => {
 		requestState.myRequests = myRequests;
 	});
 
 	const canSubmit = $derived(
-		requestState.finalGeofence !== null && note.trim().length > 0 && !requestState.submitting
+		requestState.finalGeofence !== null &&
+			note.trim().length > 0 &&
+			!requestState.submitting &&
+			(!temporaryActive || (startsOn !== '' && expiresOn !== ''))
 	);
 
+	function resetTemporary(): void {
+		isTemporary = false;
+		startsOn = '';
+		expiresOn = '';
+	}
+
 	async function handleSubmit(): Promise<void> {
-		const ok = await requestState.submitRequest(note);
-		if (ok) note = '';
+		const ok = await requestState.submitRequest(
+			note,
+			temporaryActive ? { startsOn, expiresOn } : null
+		);
+		if (ok) {
+			note = '';
+			resetTemporary();
+		}
 	}
 
 	function handleCancel(): void {
 		requestState.exitRequestMode();
 		note = '';
+		resetTemporary();
 	}
 </script>
 
@@ -109,6 +134,41 @@
 					</p>
 				{/if}
 
+				{#if requestState.requestType === 'addition'}
+					<div class="field-row">
+						<label class="temp-check">
+							<input type="checkbox" bind:checked={isTemporary} />
+							Temporary area
+						</label>
+						{#if isTemporary}
+							<div class="date-row">
+								<label class="date-field" for="request-starts-on">
+									<span class="field-label">Start</span>
+									<input
+										id="request-starts-on"
+										class="date-input"
+										type="date"
+										min={localToday}
+										required
+										bind:value={startsOn}
+									/>
+								</label>
+								<label class="date-field" for="request-expires-on">
+									<span class="field-label">End</span>
+									<input
+										id="request-expires-on"
+										class="date-input"
+										type="date"
+										min={endMin}
+										required
+										bind:value={expiresOn}
+									/>
+								</label>
+							</div>
+						{/if}
+					</div>
+				{/if}
+
 				<div class="field-row">
 					<label class="field-label" for="request-note">Note <span class="required">*</span></label>
 					<textarea
@@ -167,6 +227,9 @@
 							</div>
 							{#if req.existingAreaName}
 								<p class="req-area-name">{req.existingAreaName}</p>
+							{/if}
+							{#if req.isTemporary}
+								<p class="req-area-name">Temporary · {req.startsOn} → {req.expiresOn}</p>
 							{/if}
 							<p class="req-note">{req.userNote}</p>
 							{#if req.adminNote}
@@ -301,6 +364,42 @@
 		font-size: var(--text-xs);
 		color: var(--text-secondary);
 		margin: 0;
+	}
+
+	.temp-check {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: var(--text-xs);
+		color: var(--text-secondary);
+		cursor: pointer;
+	}
+
+	.date-row {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.date-field {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+		flex: 1;
+	}
+
+	.date-input {
+		background: #070b14;
+		border: 1px solid #1a2540;
+		border-radius: 6px;
+		color: var(--text);
+		font-size: var(--text-xs);
+		padding: 0.3rem 0.4rem;
+		color-scheme: dark;
+	}
+
+	.date-input:focus {
+		outline: none;
+		border-color: #f59e0b;
 	}
 
 	.note-area {

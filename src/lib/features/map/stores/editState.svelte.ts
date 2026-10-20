@@ -2,9 +2,10 @@
  * Geofence visual editing state.
  *
  * Manages the full lifecycle of editing a geofence on the map: entering edit
- * mode (detaching the static polygon, creating vertex/midpoint drag handles,
- * building the snap cache), updating vertices during drag, and exiting edit
- * mode by either saving or discarding. This is the app's second and last
+ * mode (detaching the static polygon, building the snap cache, and handing
+ * the polygon to a `VertexEditor` for the drag/insert/delete/snap handles),
+ * mirroring its vertices into `editingVertices`, and exiting edit mode by
+ * either saving or discarding. This is the app's second and last
  * client store (after mapState) — it never imports mapState; Leaflet
  * internals are passed in as parameters by whichever component drives it.
  */
@@ -18,15 +19,13 @@ import {
 	geoJsonToLatLngs,
 	latLngsToGeoJson
 } from '../geometry';
+import { SNAP_THRESHOLD_PX, VertexEditor } from '../vertexEditor';
 import type * as Leaflet from 'leaflet';
 import type { Area, GeoJsonPolygon } from '$lib/features/area-management/types';
 import type { LatLngTuple } from '../types';
 
 /** Pixel distance within which a draw-mode click on the first vertex closes the shape. */
 const CLOSE_VERTEX_THRESHOLD_PX = 16;
-
-/** Pixel distance within which a placed or dragged vertex snaps to another area's geofence. */
-const SNAP_THRESHOLD_PX = 16;
 
 class EditStateClass {
 	/** ID of the area currently being edited, or null when not editing. */
@@ -48,9 +47,13 @@ class EditStateClass {
 	drawingNew = $state(false);
 
 	// Leaflet objects (not reactive — Leaflet owns the DOM)
-	editingPolyLayer: Leaflet.Polygon | null = null;
+	/**
+	 * The polygon + vertex/midpoint handles for the current edit, or for a
+	 * draw-mode shape once it has been closed. Null otherwise.
+	 */
+	vertexEditor: VertexEditor | null = null;
+	/** Placeholder vertex markers shown while freehand-drawing, before the shape is closed. */
 	editingMarkerGroup: Leaflet.LayerGroup | null = null;
-	snapIndicator: Leaflet.CircleMarker | null = null;
 	/** Dashed outline shown while freehand-drawing a new geofence, before it's closed. */
 	drawPreviewLine: Leaflet.Polyline | null = null;
 
@@ -89,7 +92,8 @@ class EditStateClass {
 		this.syncKoji = false;
 
 		const rings = geoJsonToLatLngs(area.geofence);
-		this.editingVertices = rings[0] ?? [];
+		const initial = rings[0] ?? [];
+		this.editingVertices = initial;
 
 		this.snapCache = areas
 			.filter((a) => a.id !== area.id)
@@ -102,29 +106,25 @@ class EditStateClass {
 			polygonMap.delete(area.id);
 		}
 
-		this.editingPolyLayer = L.polygon(this.editingVertices, {
-			color: '#fbbf24',
-			fillColor: '#fbbf24',
-			fillOpacity: 0.12,
-			weight: 2.5,
-			dashArray: '7 4'
-		}).addTo(map);
-
-		this.rebuildEditingMarkers(L, map);
+		this.vertexEditor = new VertexEditor(L, map, {
+			vertices: initial,
+			snapRings: this.snapCache,
+			onChange: (v) => (this.editingVertices = v)
+		});
 
 		for (const [id, poly] of polygonMap) {
 			if (id !== area.id) poly.setStyle({ opacity: 0.2, fillOpacity: 0.02 });
 		}
 
-		map.fitBounds(this.editingPolyLayer.getBounds(), { padding: [60, 60] });
+		map.fitBounds(this.vertexEditor.bounds, { padding: [60, 60] });
 	}
 
 	/**
 	 * Enter draw mode for a brand-new area — no existing `Area` required.
 	 * Starts with zero vertices; `addDrawVertex` appends a vertex per click,
 	 * showing a growing dashed outline, until a click lands near the first
-	 * vertex — closing the shape and handing off to the normal
-	 * vertex/midpoint marker system (shared with `enterEditMode`).
+	 * vertex — closing the shape and handing off to a `VertexEditor` (the
+	 * same vertex/midpoint marker system `enterEditMode` uses).
 	 */
 	enterDrawMode(
 		areas: Area[],
@@ -155,10 +155,9 @@ class EditStateClass {
 	 * a placeholder marker and redraws a dashed preview outline through all
 	 * placed vertices. Once at least 3 vertices exist, a click within
 	 * `CLOSE_VERTEX_THRESHOLD_PX` pixels of the first vertex closes the
-	 * shape instead of adding another point — building the real polygon
-	 * layer and handing off to `rebuildEditingMarkers` (drag/delete/insert/
-	 * snap). A no-op once `drawingNew` is false or the shape is already closed
-	 * (`editingPolyLayer` set).
+	 * shape instead of adding another point — handing the vertices to a
+	 * `VertexEditor` (drag/delete/insert/snap). A no-op once `drawingNew` is
+	 * false or the shape is already closed (`vertexEditor` set).
 	 *
 	 * The click point itself is snapped to a nearby existing area's
 	 * vertex/edge (via `snapCache`, same as the post-close drag handlers)
@@ -166,7 +165,7 @@ class EditStateClass {
 	 * existing coverage as it's drawn rather than only after the fact.
 	 */
 	addDrawVertex(lat: number, lng: number, L: typeof Leaflet, map: Leaflet.Map): void {
-		if (!this.drawingNew || this.editingPolyLayer) return;
+		if (!this.drawingNew || this.vertexEditor) return;
 
 		if (this.editingVertices.length >= 3) {
 			const clickPt = map.latLngToContainerPoint([lat, lng]);
@@ -201,20 +200,32 @@ class EditStateClass {
 		}).addTo(this.editingMarkerGroup!);
 	}
 
-	/** Close the in-progress draw-mode shape: replace the preview outline with the real editable polygon. */
+	/**
+	 * Close the in-progress draw-mode shape: replace the preview outline and
+	 * placeholder markers with a `VertexEditor` (real editable polygon, in the
+	 * draw-mode orange style).
+	 */
 	private _closeDrawnPolygon(L: typeof Leaflet, map: Leaflet.Map): void {
 		if (this.drawPreviewLine) {
 			map.removeLayer(this.drawPreviewLine);
 			this.drawPreviewLine = null;
 		}
-		this.editingPolyLayer = L.polygon(this.editingVertices, {
-			color: '#f59e0b',
-			fillColor: '#f59e0b',
-			fillOpacity: 0.15,
-			weight: 2,
-			dashArray: '7 4'
-		}).addTo(map);
-		this.rebuildEditingMarkers(L, map);
+		if (this.editingMarkerGroup) {
+			map.removeLayer(this.editingMarkerGroup);
+			this.editingMarkerGroup = null;
+		}
+		this.vertexEditor = new VertexEditor(L, map, {
+			vertices: this.editingVertices,
+			snapRings: this.snapCache,
+			onChange: (v) => (this.editingVertices = v),
+			polygonStyle: {
+				color: '#f59e0b',
+				fillColor: '#f59e0b',
+				fillOpacity: 0.15,
+				weight: 2,
+				dashArray: '7 4'
+			}
+		});
 	}
 
 	/**
@@ -243,17 +254,13 @@ class EditStateClass {
 			map.removeLayer(this.drawPreviewLine);
 			this.drawPreviewLine = null;
 		}
-		if (this.editingPolyLayer) {
-			map.removeLayer(this.editingPolyLayer);
-			this.editingPolyLayer = null;
+		if (this.vertexEditor) {
+			this.vertexEditor.destroy();
+			this.vertexEditor = null;
 		}
 		if (this.editingMarkerGroup) {
 			map.removeLayer(this.editingMarkerGroup);
 			this.editingMarkerGroup = null;
-		}
-		if (this.snapIndicator) {
-			map.removeLayer(this.snapIndicator);
-			this.snapIndicator = null;
 		}
 
 		for (const [id, poly] of polygonMap) {
@@ -290,17 +297,9 @@ class EditStateClass {
 		this.editingVertices = [];
 		this.snapCache = [];
 
-		if (this.editingPolyLayer) {
-			map.removeLayer(this.editingPolyLayer);
-			this.editingPolyLayer = null;
-		}
-		if (this.editingMarkerGroup) {
-			map.removeLayer(this.editingMarkerGroup);
-			this.editingMarkerGroup = null;
-		}
-		if (this.snapIndicator) {
-			map.removeLayer(this.snapIndicator);
-			this.snapIndicator = null;
+		if (this.vertexEditor) {
+			this.vertexEditor.destroy();
+			this.vertexEditor = null;
 		}
 
 		for (const [id, poly] of polygonMap) {
@@ -328,160 +327,6 @@ class EditStateClass {
 				}
 			}
 		}
-	}
-
-	// ── Vertex / midpoint marker management ────────────────────────────────
-
-	/** Recreate all vertex and midpoint drag markers for the current edit session. */
-	rebuildEditingMarkers(L: typeof Leaflet, map: Leaflet.Map): void {
-		if (this.editingMarkerGroup) map.removeLayer(this.editingMarkerGroup);
-		this.editingMarkerGroup = L.layerGroup().addTo(map);
-		for (let i = 0; i < this.editingVertices.length; i++) this._createVertexMarker(i, L, map);
-		for (let i = 0; i < this.editingVertices.length; i++) this._createMidpointMarker(i, L, map);
-	}
-
-	/**
-	 * Create a draggable vertex marker at the given index. Snaps to nearby
-	 * geofence vertices/edges during drag; right-click deletes (min 3 kept).
-	 */
-	private _createVertexMarker(index: number, L: typeof Leaflet, map: Leaflet.Map): void {
-		const [lat, lng] = this.editingVertices[index];
-		const marker = L.marker([lat, lng], {
-			draggable: true,
-			zIndexOffset: 500,
-			icon: L.divIcon({
-				className: 'vertex-handle',
-				html: '',
-				iconSize: [14, 14],
-				iconAnchor: [7, 7]
-			})
-		});
-
-		marker.on('drag', (e) => {
-			let pos = (e.target as Leaflet.Marker).getLatLng();
-			const snapped = findSnap(pos, this.snapCache, map, L, SNAP_THRESHOLD_PX);
-			if (snapped) {
-				pos = snapped;
-				if (!this.snapIndicator) {
-					this.snapIndicator = L.circleMarker(pos, {
-						radius: 9,
-						color: '#fbbf24',
-						weight: 2.5,
-						fill: false,
-						className: 'snap-ring',
-						interactive: false
-					}).addTo(map);
-				} else {
-					this.snapIndicator.setLatLng(pos);
-				}
-				marker.setLatLng(pos);
-			} else if (this.snapIndicator) {
-				map.removeLayer(this.snapIndicator);
-				this.snapIndicator = null;
-			}
-			this.editingVertices[index] = [pos.lat, pos.lng];
-			this.editingPolyLayer?.setLatLngs(this.editingVertices);
-		});
-
-		marker.on('dragend', () => {
-			if (this.snapIndicator) {
-				map.removeLayer(this.snapIndicator);
-				this.snapIndicator = null;
-			}
-			this.rebuildEditingMarkers(L, map);
-		});
-
-		marker.on('contextmenu', (e) => {
-			L.DomEvent.stopPropagation(e);
-			if (this.editingVertices.length <= 3) return;
-			this.editingVertices.splice(index, 1);
-			this.editingPolyLayer?.setLatLngs(this.editingVertices);
-			this.rebuildEditingMarkers(L, map);
-		});
-
-		marker.addTo(this.editingMarkerGroup!);
-	}
-
-	/**
-	 * Create a midpoint marker between vertex `indexA` and the next vertex.
-	 * Clicking or drag-starting it inserts a new vertex there. A
-	 * `setTimeout(...,0)` after click defers the marker-group rebuild so
-	 * Leaflet finishes processing the click event first — otherwise the
-	 * newly created vertex marker can't be dragged immediately.
-	 */
-	private _createMidpointMarker(indexA: number, L: typeof Leaflet, map: Leaflet.Map): void {
-		const indexB = (indexA + 1) % this.editingVertices.length;
-		const [lat1, lng1] = this.editingVertices[indexA];
-		const [lat2, lng2] = this.editingVertices[indexB];
-		const midLat = (lat1 + lat2) / 2;
-		const midLng = (lng1 + lng2) / 2;
-
-		const marker = L.marker([midLat, midLng], {
-			draggable: true,
-			zIndexOffset: 400,
-			icon: L.divIcon({
-				className: 'midpoint-handle',
-				html: '',
-				iconSize: [10, 10],
-				iconAnchor: [5, 5]
-			})
-		});
-
-		let newIndex = -1;
-
-		marker.on('dragstart', () => {
-			newIndex = indexA + 1;
-			this.editingVertices.splice(newIndex, 0, [midLat, midLng]);
-			this.editingPolyLayer?.setLatLngs(this.editingVertices);
-			marker.setIcon(
-				L.divIcon({ className: 'vertex-handle', html: '', iconSize: [14, 14], iconAnchor: [7, 7] })
-			);
-		});
-
-		marker.on('drag', (e) => {
-			if (newIndex === -1) return;
-			let pos = (e.target as Leaflet.Marker).getLatLng();
-			const snapped = findSnap(pos, this.snapCache, map, L, SNAP_THRESHOLD_PX);
-			if (snapped) {
-				pos = snapped;
-				if (!this.snapIndicator) {
-					this.snapIndicator = L.circleMarker(pos, {
-						radius: 9,
-						color: '#fbbf24',
-						weight: 2.5,
-						fill: false,
-						className: 'snap-ring',
-						interactive: false
-					}).addTo(map);
-				} else {
-					this.snapIndicator.setLatLng(pos);
-				}
-				marker.setLatLng(pos);
-			} else if (this.snapIndicator) {
-				map.removeLayer(this.snapIndicator);
-				this.snapIndicator = null;
-			}
-			this.editingVertices[newIndex] = [pos.lat, pos.lng];
-			this.editingPolyLayer?.setLatLngs(this.editingVertices);
-		});
-
-		marker.on('dragend', () => {
-			if (this.snapIndicator) {
-				map.removeLayer(this.snapIndicator);
-				this.snapIndicator = null;
-			}
-			if (newIndex !== -1) this.rebuildEditingMarkers(L, map);
-		});
-
-		marker.on('click', (e) => {
-			L.DomEvent.stopPropagation(e);
-			if (newIndex !== -1) return;
-			this.editingVertices.splice(indexA + 1, 0, [midLat, midLng]);
-			this.editingPolyLayer?.setLatLngs(this.editingVertices);
-			setTimeout(() => this.rebuildEditingMarkers(L, map), 0);
-		});
-
-		marker.addTo(this.editingMarkerGroup!);
 	}
 
 	// ── Persistence ─────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@
 	import type { AdminAreaRequest } from '$lib/features/area-requests/server/requests';
 	import RequestMapPreview from '$lib/features/area-requests/components/RequestMapPreview.svelte';
 	import CreateAreaForm from '$lib/features/area-requests/components/CreateAreaForm.svelte';
+	import TemporaryAreasTable from '$lib/features/area-requests/components/TemporaryAreasTable.svelte';
 	import AdminPage from '$lib/components/admin/AdminPage.svelte';
 	import { geoJsonToLatLngs, calcAreaSqKm } from '$lib/features/map/geometry';
 	import { relativeTime } from '$lib/utils/time';
@@ -24,9 +25,23 @@
 	const banner = $derived.by(() => {
 		if (form?.message) return { kind: 'error' as const, text: form.message };
 		if (form && 'areaName' in form && form.areaName) {
-			return { kind: 'success' as const, text: `Created area "${form.areaName}".` };
+			const warning = 'temporaryWarning' in form ? form.temporaryWarning : undefined;
+			const bootstrap = 'bootstrap' in form ? form.bootstrap : undefined;
+			const bootstrapText = !bootstrap
+				? ''
+				: bootstrap.status === 'saved'
+					? ` Bootstrap route saved (${bootstrap.stops} stops).`
+					: ` Bootstrap route failed: ${bootstrap.reason} — generate it from the main map.`;
+			const text = `Created area "${form.areaName}".${warning ? ` ${warning}` : ''}${bootstrapText}`;
+			const failed = !!warning || bootstrap?.status === 'failed';
+			return { kind: failed ? ('error' as const) : ('success' as const), text };
 		}
-		if (form?.success) return { kind: 'success' as const, text: 'Request resolved.' };
+		if (form?.success) {
+			return {
+				kind: 'success' as const,
+				text: data.view === 'temporary' ? 'Saved.' : 'Request resolved.'
+			};
+		}
 		return null;
 	});
 
@@ -70,123 +85,147 @@
 			{#each statuses as s (s)}
 				<a
 					href="/admin/requests?status={s}"
-					aria-current={data.statusFilter === s ? 'page' : undefined}
+					aria-current={data.view === 'requests' && data.statusFilter === s ? 'page' : undefined}
 					>{s === 'all' ? 'All' : s[0].toUpperCase() + s.slice(1)}
 					<span class="count" class:pending={s === 'pending' && data.statusCounts.pending > 0}
 						>{data.statusCounts[s]}</span
 					></a
 				>
 			{/each}
+			<a
+				href="/admin/requests?view=temporary"
+				aria-current={data.view === 'temporary' ? 'page' : undefined}
+				>Temporary <span class="count">{data.temporaryAreas.length}</span></a
+			>
 		</nav>
 
-		<div class="segmented mobile-tabs" role="group" aria-label="View">
-			<button type="button" aria-pressed={mobileTab === 'list'} onclick={() => (mobileTab = 'list')}
-				>List</button
-			>
-			<button type="button" aria-pressed={mobileTab === 'map'} onclick={() => (mobileTab = 'map')}
-				>Map</button
-			>
-		</div>
+		{#if data.view === 'requests'}
+			<div class="segmented mobile-tabs" role="group" aria-label="View">
+				<button
+					type="button"
+					aria-pressed={mobileTab === 'list'}
+					onclick={() => (mobileTab = 'list')}>List</button
+				>
+				<button type="button" aria-pressed={mobileTab === 'map'} onclick={() => (mobileTab = 'map')}
+					>Map</button
+				>
+			</div>
+		{/if}
 	</div>
 
-	<div class="split-layout">
-		<div class="list-panel" class:mobile-hidden={mobileTab === 'map'}>
-			{#if data.requests.length === 0}
-				<p class="empty panel-empty">
-					{data.statusFilter === 'pending'
-						? 'No pending requests — all caught up.'
-						: 'No requests match this filter.'}
-				</p>
-			{:else}
-				<ul class="request-list">
-					{#each data.requests as req (req.id)}
-						{@const stats = computeAreaStats(req.geofence)}
-						<li class="request-item" class:selected={selectedId === req.id}>
-							<button
-								type="button"
-								class="request-header"
-								aria-expanded={selectedId === req.id}
-								onclick={() => selectRequest(req)}
-							>
-								<span class="badges">
-									<span class="badge {req.type === 'addition' ? 'badge-good' : 'badge-danger'}"
-										>{req.type === 'addition' ? 'Add' : 'Remove'}</span
-									>
-									<span
-										class="badge"
-										class:badge-warn={req.status === 'pending'}
-										class:badge-good={req.status === 'approved'}
-										class:badge-danger={req.status === 'rejected'}>{req.status}</span
-									>
-								</span>
-								<span class="who">{req.username}</span>
-								<span class="when" title={new Date(req.submittedAt).toLocaleString()}
-									>{relativeTime(req.submittedAt)}</span
+	{#if data.view === 'temporary'}
+		<TemporaryAreasTable items={data.temporaryAreas} />
+	{:else}
+		<div class="split-layout">
+			<div class="list-panel" class:mobile-hidden={mobileTab === 'map'}>
+				{#if data.requests.length === 0}
+					<p class="empty panel-empty">
+						{data.statusFilter === 'pending'
+							? 'No pending requests — all caught up.'
+							: 'No requests match this filter.'}
+					</p>
+				{:else}
+					<ul class="request-list">
+						{#each data.requests as req (req.id)}
+							{@const stats = computeAreaStats(req.geofence)}
+							<li class="request-item" class:selected={selectedId === req.id}>
+								<button
+									type="button"
+									class="request-header"
+									aria-expanded={selectedId === req.id}
+									onclick={() => selectRequest(req)}
 								>
-							</button>
+									<span class="badges">
+										<span class="badge {req.type === 'addition' ? 'badge-good' : 'badge-danger'}"
+											>{req.type === 'addition' ? 'Add' : 'Remove'}</span
+										>
+										<span
+											class="badge"
+											class:badge-warn={req.status === 'pending'}
+											class:badge-good={req.status === 'approved'}
+											class:badge-danger={req.status === 'rejected'}>{req.status}</span
+										>
+										{#if req.isTemporary}
+											<span class="badge badge-violet"
+												>Temporary {req.startsOn} → {req.expiresOn}</span
+											>
+										{/if}
+									</span>
+									<span class="who">{req.username}</span>
+									<span class="when" title={new Date(req.submittedAt).toLocaleString()}
+										>{relativeTime(req.submittedAt)}</span
+									>
+								</button>
 
-							{#if req.existingAreaName}
-								<p class="existing">Area: <b>{req.existingAreaName}</b></p>
-							{/if}
-							<blockquote class="user-note">{req.userNote}</blockquote>
-							{#if req.adminNote}
-								<p class="admin-note"><span class="hint">Admin note:</span> {req.adminNote}</p>
-							{/if}
-							{#if stats}
-								<p class="hint stats">
-									{stats.areaSqMi.toFixed(2)} mi² · {stats.areaSqKm.toFixed(2)} km² ·
-									{stats.vertexCount} vertices
-								</p>
-							{/if}
+								{#if req.existingAreaName}
+									<p class="existing">Area: <b>{req.existingAreaName}</b></p>
+								{/if}
+								<blockquote class="user-note">{req.userNote}</blockquote>
+								{#if req.adminNote}
+									<p class="admin-note"><span class="hint">Admin note:</span> {req.adminNote}</p>
+								{/if}
+								{#if stats}
+									<p class="hint stats">
+										{stats.areaSqMi.toFixed(2)} mi² · {stats.areaSqKm.toFixed(2)} km² ·
+										{stats.vertexCount} vertices
+									</p>
+								{/if}
 
-							{#if req.status === 'pending'}
-								<div class="resolve">
-									{#if req.type === 'removal'}
+								{#if req.status === 'pending'}
+									<div class="resolve">
+										{#if req.type === 'removal'}
+											<form
+												method="POST"
+												action="?/resolveRequest"
+												use:enhance
+												class="resolve-form"
+											>
+												<input type="hidden" name="id" value={req.id} />
+												<input type="hidden" name="status" value="approved" />
+												<input
+													class="input"
+													type="text"
+													name="adminNote"
+													placeholder="Admin note (optional)"
+													aria-label="Admin note"
+												/>
+												<button type="submit" class="btn btn-success"
+													>Approve and disable area</button
+												>
+											</form>
+										{:else}
+											<CreateAreaForm {req} kojiConfigured={data.kojiConfigured} />
+										{/if}
 										<form method="POST" action="?/resolveRequest" use:enhance class="resolve-form">
 											<input type="hidden" name="id" value={req.id} />
-											<input type="hidden" name="status" value="approved" />
+											<input type="hidden" name="status" value="rejected" />
 											<input
 												class="input"
 												type="text"
 												name="adminNote"
-												placeholder="Admin note (optional)"
-												aria-label="Admin note"
+												placeholder="Reason for rejecting (optional)"
+												aria-label="Rejection note"
 											/>
-											<button type="submit" class="btn btn-success">Approve and disable area</button
-											>
+											<button type="submit" class="btn btn-danger">Reject</button>
 										</form>
-									{:else}
-										<CreateAreaForm {req} />
-									{/if}
-									<form method="POST" action="?/resolveRequest" use:enhance class="resolve-form">
-										<input type="hidden" name="id" value={req.id} />
-										<input type="hidden" name="status" value="rejected" />
-										<input
-											class="input"
-											type="text"
-											name="adminNote"
-											placeholder="Reason for rejecting (optional)"
-											aria-label="Rejection note"
-										/>
-										<button type="submit" class="btn btn-danger">Reject</button>
-									</form>
-								</div>
-							{/if}
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</div>
+									</div>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
 
-		<div class="map-panel" class:mobile-hidden={mobileTab === 'list'}>
-			<RequestMapPreview
-				areas={data.areas}
-				tileSettings={data.tileSettings}
-				startView={data.startView}
-				selected={selectedRequest}
-			/>
+			<div class="map-panel" class:mobile-hidden={mobileTab === 'list'}>
+				<RequestMapPreview
+					areas={data.areas}
+					tileSettings={data.tileSettings}
+					startView={data.startView}
+					selected={selectedRequest}
+				/>
+			</div>
 		</div>
-	</div>
+	{/if}
 </AdminPage>
 
 <style>

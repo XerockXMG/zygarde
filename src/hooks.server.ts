@@ -5,6 +5,7 @@ import { getSessionStore } from '$lib/features/auth/server/store';
 import {
 	startOrphanVoteCleanupScheduler,
 	startSubscriptionSyncScheduler,
+	startTemporaryAreaScheduler,
 	startWorkerAutoscaleScheduler
 } from '$lib/server/scheduler';
 import { logger } from '$lib/server/logger';
@@ -23,6 +24,7 @@ if (pool) {
 startSubscriptionSyncScheduler();
 startWorkerAutoscaleScheduler();
 startOrphanVoteCleanupScheduler();
+startTemporaryAreaScheduler();
 
 export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.user = null;

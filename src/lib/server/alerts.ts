@@ -7,7 +7,8 @@ import { logger } from '$lib/server/logger';
  */
 export const ALERT_TOGGLES = {
 	areaRequests: 'ALERT_AREA_REQUESTS',
-	tokenChanges: 'ALERT_TOKEN_CHANGES'
+	tokenChanges: 'ALERT_TOKEN_CHANGES',
+	temporaryAreaExpired: 'ALERT_TEMP_AREA_EXPIRED'
 } as const;
 
 export type AlertEvent = keyof typeof ALERT_TOGGLES;

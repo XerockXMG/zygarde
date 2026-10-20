@@ -52,6 +52,8 @@ import {
 	deleteMyRequest,
 	type QueryExecutor as RequestQueryExecutor
 } from '$lib/features/area-requests/server/requests';
+import { tempAreaToday } from '$lib/features/area-requests/server/timezone';
+import { validateTemporaryDates } from '$lib/features/area-requests/dates';
 import { sendRequestWebhook } from '$lib/features/area-requests/server/discord';
 import {
 	getTileSettings,
@@ -823,6 +825,21 @@ export const actions: Actions = {
 			return fail(400, { message: 'An addition request cannot reference an existing area.' });
 		}
 
+		let temporary: { startsOn: string; expiresOn: string } | null = null;
+		if (form.get('temporary') === '1') {
+			if (type === 'removal')
+				return fail(400, { message: 'Only area additions can be temporary.' });
+			const startsOn = form.get('startsOn');
+			const expiresOn = form.get('expiresOn');
+			const dateError = validateTemporaryDates(
+				typeof startsOn === 'string' ? startsOn : '',
+				typeof expiresOn === 'string' ? expiresOn : '',
+				tempAreaToday()
+			);
+			if (dateError) return fail(400, { message: dateError });
+			temporary = { startsOn: startsOn as string, expiresOn: expiresOn as string };
+		}
+
 		// The area identity of a removal request is resolved server-side: the
 		// client's existingAreaName/geofence are labels an admin later acts on,
 		// so they must come from Dragonite rather than the submitted form.
@@ -878,7 +895,8 @@ export const actions: Actions = {
 				existingAreaName: existingAreaLabel,
 				userNote: note.trim(),
 				discordId: locals.user.discordId,
-				username: locals.user.username
+				username: locals.user.username,
+				temporary
 			});
 		} catch (err) {
 			logger.error({ err, discordId: locals.user.discordId }, 'Failed to submit area request');

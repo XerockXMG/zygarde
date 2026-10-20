@@ -79,6 +79,22 @@ const SCHEMA_STATEMENTS: string[] = [
 		KEY idx_status (status),
 		KEY idx_discord_id (discord_id)
 	)`,
+	// Temporary-area requests: area_requests predates these columns.
+	`ALTER TABLE area_requests ADD COLUMN IF NOT EXISTS is_temporary TINYINT(1) NOT NULL DEFAULT 0`,
+	`ALTER TABLE area_requests ADD COLUMN IF NOT EXISTS starts_on DATE NULL`,
+	`ALTER TABLE area_requests ADD COLUMN IF NOT EXISTS expires_on DATE NULL`,
+	`CREATE TABLE IF NOT EXISTS temporary_areas (
+		area_id INT PRIMARY KEY,
+		request_id INT NULL,
+		starts_on DATE NOT NULL,
+		expires_on DATE NOT NULL,
+		discord_id VARCHAR(32) NOT NULL,
+		username VARCHAR(64) NOT NULL,
+		started_at DATETIME NULL,
+		notified_at DATETIME NULL,
+		disabled_at DATETIME NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`,
 	`CREATE TABLE IF NOT EXISTS spawnpoint_cache (
 		area_id INT NOT NULL,
 		mode VARCHAR(16) NOT NULL,

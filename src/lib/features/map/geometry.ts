@@ -194,3 +194,13 @@ export function canVisuallyEditPolygon(geofence: GeoJsonGeometry | null): boolea
 export function appendDrawVertex(vertices: LatLngTuple[], lat: number, lng: number): LatLngTuple[] {
 	return [...vertices, [lat, lng]];
 }
+
+/**
+ * Remove the vertex at `index` from a working polygon ring. Returns a new
+ * array, or null when removal would leave fewer than 3 vertices (the
+ * editor's minimum for a valid polygon) — callers treat null as "refuse".
+ */
+export function removeVertex(vertices: LatLngTuple[], index: number): LatLngTuple[] | null {
+	if (vertices.length <= 3) return null;
+	return vertices.filter((_, i) => i !== index);
+}

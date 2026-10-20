@@ -8,9 +8,11 @@
 	 * fields on the same `?/createArea` form submit.
 	 */
 	import { enhance } from '$app/forms';
+	import { addDays, isStartDue, todayInZone } from '$lib/features/area-requests/dates';
 	import type { AdminAreaRequest } from '$lib/features/area-requests/server/requests';
 
-	let { req }: { req: AdminAreaRequest } = $props();
+	let { req, kojiConfigured = false }: { req: AdminAreaRequest; kojiConfigured?: boolean } =
+		$props();
 
 	function parseGeofence(geofence: string): string {
 		try {
@@ -20,6 +22,23 @@
 		}
 	}
 
+	// Client-side hint only; the server decides using TEMP_AREA_TIMEZONE.
+	const localToday = todayInZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+	// Initial values only: the admin may override the request's choices.
+	// svelte-ignore state_referenced_locally
+	let temporary = $state(req.isTemporary);
+	// A request reviewed after its start date starts today (the server clamps the same way).
+	// svelte-ignore state_referenced_locally
+	let startsOn = $state(
+		req.startsOn && req.startsOn < localToday ? localToday : (req.startsOn ?? '')
+	);
+	// svelte-ignore state_referenced_locally
+	let expiresOn = $state(req.expiresOn ?? '');
+	const expiresMin = $derived(
+		addDays(startsOn && startsOn > localToday ? startsOn : localToday, 1)
+	);
+	const startFar = $derived(temporary && !!startsOn && !isStartDue(startsOn, localToday));
+
 	let pokemonWorkers = $state('0');
 	let setTarget = $state(false);
 	let targetMode = $state<'static' | 'workers'>('static');
@@ -27,19 +46,37 @@
 	let targetOverride = $state('');
 	let enableAutoscaleFlag = $state(false);
 	let setKojiGeofence = $state(false);
+	let pending = $state(false);
 </script>
 
-<form method="POST" action="?/createArea" use:enhance class="create-area-form">
+<form
+	method="POST"
+	action="?/createArea"
+	use:enhance={() => {
+		pending = true;
+		return async ({ update }) => {
+			try {
+				await update();
+			} finally {
+				pending = false;
+			}
+		};
+	}}
+	class="create-area-form"
+>
 	<input type="hidden" name="requestId" value={req.id} />
 	<p class="card-label">Create area</p>
 	<label class="field">
 		<span class="field-label">Name</span>
 		<input class="input" type="text" name="name" required />
 	</label>
-	<label class="check">
-		<input type="checkbox" name="enabled" value="1" checked />
+	<label class="check" class:disabled={temporary}>
+		<input type="checkbox" name="enabled" value="1" checked disabled={temporary} />
 		Enabled
 	</label>
+	{#if temporary}
+		<span class="hint">Controlled by the start date</span>
+	{/if}
 	<div class="workers">
 		<label class="field">
 			<span class="field-label">Pokémon workers</span>
@@ -66,8 +103,45 @@
 	</div>
 	<label class="field">
 		<span class="field-label">Geofence (GeoJSON Polygon)</span>
-		<textarea class="input" name="geofence" rows="6">{parseGeofence(req.geofence)}</textarea>
+		<textarea class="input" name="geofence" rows="6" value={parseGeofence(req.geofence)}></textarea>
 	</label>
+
+	<fieldset>
+		<legend class="card-label">Temporary</legend>
+		<label class="check">
+			<input type="checkbox" name="temporary" value="1" bind:checked={temporary} />
+			Temporary area
+		</label>
+		{#if temporary}
+			<div class="workers">
+				<label class="field">
+					<span class="field-label">Starts on</span>
+					<input
+						class="input"
+						type="date"
+						name="startsOn"
+						required
+						min={localToday}
+						bind:value={startsOn}
+					/>
+				</label>
+				<label class="field">
+					<span class="field-label">Expires on</span>
+					<input
+						class="input"
+						type="date"
+						name="expiresOn"
+						required
+						min={expiresMin}
+						bind:value={expiresOn}
+					/>
+				</label>
+			</div>
+			{#if startFar}
+				<span class="hint">Area is created off and turns on the day before the start date</span>
+			{/if}
+		{/if}
+	</fieldset>
 
 	<fieldset>
 		<legend class="card-label">Token target &amp; autoscale</legend>
@@ -144,6 +218,14 @@
 		{/if}
 	</fieldset>
 
+	{#if kojiConfigured}
+		<label class="check">
+			<input type="checkbox" name="generateBootstrap" value="1" checked />
+			Generate a bootstrap route in Kōji
+		</label>
+		<span class="hint">Can take up to 2 minutes</span>
+	{/if}
+
 	<input
 		class="input"
 		type="text"
@@ -152,7 +234,9 @@
 		aria-label="Admin note"
 	/>
 	<div>
-		<button type="submit" class="btn btn-success">Create area and approve</button>
+		<button type="submit" class="btn btn-success" disabled={pending}>
+			{pending ? 'Creating…' : 'Create area and approve'}
+		</button>
 	</div>
 </form>
 

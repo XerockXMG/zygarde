@@ -7,7 +7,8 @@ import {
 	countRequestsByStatus,
 	getRequestById,
 	resolveRequest,
-	approveAsCreated
+	approveAsCreated,
+	updatePendingAdditionGeofence
 } from './requests';
 
 describe('submitRequest', () => {
@@ -22,7 +23,8 @@ describe('submitRequest', () => {
 			existingAreaName: null,
 			userNote: 'Please add this area',
 			discordId: 'discord-1',
-			username: 'tester'
+			username: 'tester',
+			temporary: null
 		});
 
 		expect(execute).toHaveBeenCalledTimes(1);
@@ -35,7 +37,43 @@ describe('submitRequest', () => {
 			null,
 			'Please add this area',
 			'discord-1',
-			'tester'
+			'tester',
+			0,
+			null,
+			null
+		]);
+	});
+
+	it('inserts temporary dates', async () => {
+		const execute = vi.fn().mockResolvedValue([{}, {}]);
+
+		await submitRequest(
+			{ execute },
+			{
+				type: 'addition',
+				geofence: '{}',
+				existingAreaId: null,
+				existingAreaName: null,
+				userNote: 'Event weekend',
+				discordId: 'discord-1',
+				username: 'tester',
+				temporary: { startsOn: '2026-10-21', expiresOn: '2026-11-05' }
+			}
+		);
+
+		const [sql, params] = execute.mock.calls[0];
+		expect(sql).toContain('is_temporary, starts_on, expires_on');
+		expect(params).toEqual([
+			'addition',
+			'{}',
+			null,
+			null,
+			'Event weekend',
+			'discord-1',
+			'tester',
+			1,
+			'2026-10-21',
+			'2026-11-05'
 		]);
 	});
 });
@@ -53,7 +91,10 @@ describe('listMyRequests', () => {
 					user_note: 'Too much overlap',
 					admin_note: null,
 					submitted_at: submittedAt,
-					resolved_at: null
+					resolved_at: null,
+					is_temporary: 0,
+					starts_on: null,
+					expires_on: null
 				}
 			],
 			{}
@@ -74,7 +115,10 @@ describe('listMyRequests', () => {
 				userNote: 'Too much overlap',
 				adminNote: null,
 				submittedAt: submittedAt.toISOString(),
-				resolvedAt: null
+				resolvedAt: null,
+				isTemporary: false,
+				startsOn: null,
+				expiresOn: null
 			}
 		]);
 	});
@@ -164,7 +208,10 @@ describe('listRequestsForAdmin', () => {
 					submitted_at: submittedAt,
 					resolved_at: null,
 					resolved_by_username: null,
-					created_area_id: null
+					created_area_id: null,
+					is_temporary: 1,
+					starts_on: '2026-10-21',
+					expires_on: '2026-11-05'
 				}
 			],
 			{}
@@ -173,6 +220,7 @@ describe('listRequestsForAdmin', () => {
 
 		const result = await listRequestsForAdmin(executor, 'all');
 
+		expect(execute.mock.calls[0][0]).toContain('DATE_FORMAT(expires_on');
 		expect(result).toEqual([
 			{
 				id: 2,
@@ -188,7 +236,10 @@ describe('listRequestsForAdmin', () => {
 				submittedAt: submittedAt.toISOString(),
 				resolvedAt: null,
 				resolvedByUsername: null,
-				createdAreaId: null
+				createdAreaId: null,
+				isTemporary: true,
+				startsOn: '2026-10-21',
+				expiresOn: '2026-11-05'
 			}
 		]);
 	});
@@ -203,7 +254,11 @@ describe('getRequestById', () => {
 					status: 'pending',
 					discord_id: 'discord-1',
 					existing_area_id: 9,
-					geofence: '{}'
+					geofence: '{}',
+					is_temporary: 0,
+					starts_on: null,
+					expires_on: null,
+					username: 'tester'
 				}
 			],
 			{}
@@ -217,7 +272,11 @@ describe('getRequestById', () => {
 			status: 'pending',
 			discord_id: 'discord-1',
 			existing_area_id: 9,
-			geofence: '{}'
+			geofence: '{}',
+			is_temporary: 0,
+			starts_on: null,
+			expires_on: null,
+			username: 'tester'
 		});
 	});
 
@@ -256,5 +315,25 @@ describe('approveAsCreated', () => {
 		expect(sql).toContain("status = 'approved'");
 		expect(sql).toContain('created_area_id = ?');
 		expect(params).toEqual([null, 'admin-1', 'adminuser', 42, 1]);
+	});
+});
+
+describe('updatePendingAdditionGeofence', () => {
+	it('updates only a pending addition and reports whether a row changed', async () => {
+		const execute = vi.fn().mockResolvedValue([{ affectedRows: 1 }, {}]);
+		const executor = { execute };
+
+		const changed = await updatePendingAdditionGeofence(executor, 7, '{"type":"Polygon"}');
+
+		const [sql, params] = execute.mock.calls[0];
+		expect(sql).toContain('UPDATE area_requests');
+		expect(sql).toContain("status = 'pending' AND type = 'addition'");
+		expect(params).toEqual(['{"type":"Polygon"}', 7]);
+		expect(changed).toBe(true);
+	});
+
+	it('returns false when no row matched', async () => {
+		const execute = vi.fn().mockResolvedValue([{ affectedRows: 0 }, {}]);
+		expect(await updatePendingAdditionGeofence({ execute }, 7, '{}')).toBe(false);
 	});
 });

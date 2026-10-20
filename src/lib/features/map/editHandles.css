@@ -1,0 +1,44 @@
+/*
+ * Vertex and midpoint drag-handle styles for VertexEditor (vertexEditor.ts).
+ * Global, since Leaflet renders markers into its own DOM. Import this from any
+ * component that hosts a VertexEditor.
+ */
+
+.vertex-handle {
+	background: #fbbf24;
+	border: 2px solid #fff;
+	border-radius: 50%;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+	cursor: grab !important;
+	transition: transform 0.1s;
+}
+
+.vertex-handle:hover {
+	transform: scale(1.45);
+}
+
+.leaflet-marker-draggable.vertex-handle,
+.leaflet-marker-draggable .vertex-handle {
+	cursor: grab !important;
+}
+
+.leaflet-dragging .vertex-handle {
+	cursor: grabbing !important;
+	transform: scale(1.3);
+}
+
+.midpoint-handle {
+	background: rgba(251, 191, 36, 0.4);
+	border: 1.5px dashed rgba(255, 255, 255, 0.8);
+	border-radius: 50%;
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+	cursor: cell !important;
+	transition:
+		transform 0.1s,
+		background 0.1s;
+}
+
+.midpoint-handle:hover {
+	background: rgba(251, 191, 36, 0.85);
+	transform: scale(1.5);
+}

@@ -13,7 +13,7 @@ A SvelteKit dashboard for managing [Dragonite](https://github.com/UnownHash/Drag
 - **Token-based voting + weighted tiers** — logged-in users get a spendable token budget equal to their tier's weight (e.g. Free=1/Supporter=3/VIP=5, resolved from Discord roles with an optional admin override) and allocate it across areas with +/− steppers, optionally marking one funded area as primary ("♥"). Admins set a per-area **vote target** — a static number, or _N_ Pokémon-mode workers per token, with a global default plus a per-area override — so area cards show funded/target progress (and a header token-budget indicator shows each user's remaining/total) instead of a raw vote count. If a user's budget shrinks (tier downgrade, admin override change, lapsed subscription), their oldest allocations are trimmed automatically to fit, primary area preserved first.
 - **Subscription sync (optional)** — periodically re-checks each elevated user's current Discord roles (no external database involved) and drops anyone who's lost the required role back to a zero-token tier once they've failed that check for longer than a configurable grace period, trimming their existing vote allocations to fit via the normal token-budget enforcement. Unconfigured deployments simply skip this entirely.
 - **Worker autoscale (optional)** — per-area, opt-in throttling of Pokémon-mode worker count to a percentage of a fixed baseline (snapshotted from the area's live count when enabled), based on how funded its vote target currently is: 100% funded runs the full baseline, tapering down to 10% at zero tokens. A background job re-checks and applies this on an admin-configurable interval (default 15 minutes, with a "Run Now" button on `/admin/autoscale` to apply immediately rather than waiting out the interval); mass-enable/disable is available from Batch Mode. Enabling requires a vote target already be set for the area. Disabling restores the area to its stored baseline.
-- **Area requests** — users can request a new area be added (draw a geofence) or an existing one removed, with admin review, Discord DM on resolution, and an optional alert-webhook notification (with a static map preview image). The admin review page (`/admin/requests`) shows each request's geofence coverage (sq mi/km, vertex count) to help size starting worker counts, and approving an addition into a new Dragonite area can, in the same action, also set its vote target, enable worker autoscale, and/or create the matching geofence in Kōji. Areas created this way get Dragonite quest hours `1,10` (quest checks at 1:00 and 10:00) unless `DEFAULT_QUEST_HOURS` says otherwise.
+- **Area requests** — users can request a new area be added (draw a geofence) or an existing one removed, with admin review, Discord DM on resolution, and an optional alert-webhook notification (with a static map preview image). The admin review page (`/admin/requests`) shows each request's geofence coverage (sq mi/km, vertex count) to help size starting worker counts, and approving an addition into a new Dragonite area can, in the same action, also set its vote target, enable worker autoscale, and/or create the matching geofence in Kōji, and/or generate and save a Kōji bootstrap route. Members can request an addition as **temporary** with start and end dates; admins manage those on a Temporary tab (edit dates, make permanent), and an hourly job switches them on and off. Admins can also edit a request's geofence on the review map before approving. Areas created this way get Dragonite quest hours `1,10` (quest checks at 1:00 and 10:00) unless `DEFAULT_QUEST_HOURS` says otherwise.
 - **Spawnpoint counts (Golbat)** — read-only, cached counts of spawnpoints per area (All / Recent / Confirmed), pulled directly from a Golbat database.
 - **Admin dashboard** — every admin page shares a nav bar (Dashboard / Tiers / Autoscale / Requests / Spawnpoints / Tileserver). `/admin/dashboard` has summary cards (token goals, voting coverage, capacity: tokens spent and running vs. baseline workers), an area ranking table (tokens split into active-subscriber vs. other, % of token goal, subscriber share, voters, baseline workers; sortable by all or subscriber tokens, top 5/10/all), top 5/10 voters, and the list of enabled areas with no votes. `/admin/tiers` (search/override user tiers; set the global workers-per-token default and the subscription grace period), `/admin/autoscale` (the worker-autoscale sync interval, a manual "Run Autoscale Sync Now", and a status table of every autoscale-enabled area: funding, speed tier, current vs. next-sync workers, baseline), `/admin/requests` (approve/reject area requests), `/admin/spawnpoints` (cache stats, TTL/recent-window settings), `/admin/tileserver` (configure the map tile server; the old `/admin/map` URL redirects there). Per-area vote targets and worker autoscale are set inline on each area card instead (admin-only, when expanded).
 
@@ -189,6 +189,7 @@ Golbat's own database, for spawnpoint counts per area. Zygarde only reads it, so
 DISCORD_ALERT_WEBHOOK_URL="https://discord.com/api/webhooks/..."
 ALERT_AREA_REQUESTS="true"
 ALERT_TOKEN_CHANGES="true"
+ALERT_TEMP_AREA_EXPIRED="true"
 STATIC_PROVIDER_URL="http://127.0.0.1:8090"
 ```
 
@@ -196,10 +197,17 @@ Every alert goes to the one webhook. Each kind is off unless its setting is `tru
 
 - `ALERT_AREA_REQUESTS`: someone submits a request to add or remove an area.
 - `ALERT_TOKEN_CHANGES`: someone adds or removes tokens on an area, showing the area's new total and how funded it is. Tokens removed automatically, when someone's tier drops, aren't posted.
+- `ALERT_TEMP_AREA_EXPIRED`: a temporary area reached its end date and was switched off.
 
 `STATIC_PROVIDER_URL` is a staticmap tileserver (Rampardos, or SwiftTileserverCache) that draws the area's map image on these alerts and on the DM a user gets when their area request is resolved. It must have the `poracle-area` staticmap template. Leave it empty and those messages have no image.
 
 To add a new kind of alert, add its setting to `ALERT_TOGGLES` in `src/lib/server/alerts.ts` and call `postAlert` with it.
+
+### Temporary areas (optional)
+
+Members can request an area addition as temporary, with a start and end date. `TEMP_AREA_TIMEZONE` (an IANA zone such as `America/New_York`, the default) decides what "today" means when those dates are validated. An invalid value logs a warning once and falls back to the default.
+
+An hourly background job switches each temporary area on the day before its start date, DMs the requester the day before it ends, and switches it off on its end date. An area is never re-enabled automatically after that.
 
 ## Development
 

@@ -2,7 +2,8 @@
  * In-process periodic jobs, started once at boot from hooks.server.ts —
  * the subscription role-check sync (see features/subscriptions/server/sync.ts),
  * the worker-autoscale sync (see features/autoscale/server/sync.ts) and the
- * orphaned-vote cleanup (see features/voting/server/orphans.ts).
+ * orphaned-vote cleanup (see features/voting/server/orphans.ts) and the
+ * temporary-area start/expiry pass (see features/area-requests/server/temporary.ts).
  * Errors are logged and swallowed; a job failing here must never take down
  * the app.
  */
@@ -24,9 +25,16 @@ import {
 	runAutoscaleSync,
 	type QueryExecutor as AutoscaleQueryExecutor
 } from '$lib/features/autoscale/server/sync';
-import { listAllAreas } from '$lib/features/area-management/server/dragonite';
+import { listAllAreas, patchArea } from '$lib/features/area-management/server/dragonite';
 import { cleanupOrphanedVotes } from '$lib/features/voting/server/orphans';
 import type { QueryExecutor as VoteQueryExecutor } from '$lib/features/voting/server/votes';
+import {
+	runTemporaryAreaPass,
+	type QueryExecutor as TemporaryQueryExecutor
+} from '$lib/features/area-requests/server/temporary';
+import { tempAreaToday } from '$lib/features/area-requests/server/timezone';
+import { sendTemporaryExpiryDm } from '$lib/features/area-requests/server/discord';
+import { postAlert } from './alerts';
 
 // Once a day is plenty of granularity for a grace period measured in days.
 const SUBSCRIPTION_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -181,4 +189,85 @@ export function startOrphanVoteCleanupScheduler(): void {
 	setInterval(() => {
 		void runOrphanVoteCleanup();
 	}, ORPHAN_VOTE_CLEANUP_INTERVAL_MS);
+}
+
+// Hourly: dates are whole days, so the exact minute a start/shut-off lands on doesn't matter.
+const TEMPORARY_AREA_INTERVAL_MS = 60 * 60 * 1000;
+// A row is only retired as deleted after its area is missing on two consecutive passes.
+let temporaryAreaIdsMissingLastRun = new Set<number>();
+
+async function runTemporaryAreas(): Promise<void> {
+	const localPool = getPool(env.LOCAL_DATABASE_URL);
+	const baseUrl = env.DRAGONITE_URL;
+	if (!localPool || !baseUrl) return;
+
+	try {
+		const config = { baseUrl };
+		const result = await runTemporaryAreaPass(
+			localPool as unknown as TemporaryQueryExecutor,
+			tempAreaToday(),
+			{
+				listLiveAreas: async () =>
+					(await listAllAreas(config)).map((a) => ({
+						id: a.id,
+						name: a.name,
+						// May be null for a malformed area; the DM and preview tolerate that
+						geofence: a.geofence as NonNullable<typeof a.geofence>
+					})),
+				setEnabled: async (areaId, enabled) => {
+					await patchArea(config, areaId, { enabled });
+				},
+				sendExpiryDm: (row, areaName, geofence) =>
+					sendTemporaryExpiryDm(
+						row.discordId,
+						areaName,
+						row.expiresOn,
+						env.ORIGIN ?? null,
+						geofence
+					),
+				alertDisabled: (row, areaName) =>
+					postAlert('temporaryAreaExpired', [
+						{
+							title: 'Temporary area shut off',
+							color: 0xf59e0b,
+							fields: [
+								{ name: 'Area', value: `${areaName} (#${row.areaId})`, inline: true },
+								{ name: 'Requested by', value: row.username, inline: true },
+								{ name: 'Ended', value: row.expiresOn, inline: true }
+							],
+							timestamp: new Date().toISOString()
+						}
+					]),
+				log: logger
+			},
+			temporaryAreaIdsMissingLastRun
+		);
+		temporaryAreaIdsMissingLastRun = new Set(result.missing);
+		if (result.start.length + result.warn.length + result.disable.length + result.gone.length > 0) {
+			logger.info({ ...result }, 'Temporary-area pass applied changes');
+		}
+		const pending = result.missing.filter((id) => !result.gone.includes(id));
+		if (pending.length > 0) {
+			logger.info(
+				{ areaIds: pending },
+				'Temporary areas missing from Dragonite; marking them gone next run if still missing'
+			);
+		}
+	} catch (err) {
+		temporaryAreaIdsMissingLastRun = new Set();
+		logger.error({ err }, 'Temporary-area pass failed');
+	}
+}
+
+let temporaryAreasStarted = false;
+
+export function startTemporaryAreaScheduler(): void {
+	if (temporaryAreasStarted) return;
+	temporaryAreasStarted = true;
+	if (!env.LOCAL_DATABASE_URL || !env.DRAGONITE_URL) return;
+
+	void runTemporaryAreas();
+	setInterval(() => {
+		void runTemporaryAreas();
+	}, TEMPORARY_AREA_INTERVAL_MS);
 }
