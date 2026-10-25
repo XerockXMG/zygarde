@@ -1,5 +1,5 @@
 // src/routes/admin/requests/+page.server.ts
-import { error, fail } from '@sveltejs/kit';
+import { error, fail, type ActionFailure } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { getPool } from '$lib/server/db';
 import { logger } from '$lib/server/logger';
@@ -54,7 +54,32 @@ import {
 	type QueryExecutor as AutoscaleQueryExecutor
 } from '$lib/features/autoscale/server/state';
 import type { AreaMapSummary } from '$lib/features/area-requests/types';
-import type { PageServerLoad, Actions } from './$types';
+import type { PageServerLoad, Actions, RequestEvent } from './$types';
+
+// Request ids currently being resolved. resolveRequest and createArea check
+// "still pending" and then act (disable / create a Dragonite area) before marking
+// the row resolved, so two admins clicking at once could both act. Holding the
+// id for the action's duration makes the second one see the first's result.
+const inFlightRequests = new Set<number>();
+
+function oneAtATime<T>(
+	idField: string,
+	action: (event: RequestEvent) => Promise<T>
+): (event: RequestEvent) => Promise<T | ActionFailure<{ message: string }>> {
+	return async (event) => {
+		const id = Number((await event.request.clone().formData()).get(idField));
+		if (!Number.isInteger(id) || id <= 0) return action(event);
+		if (inFlightRequests.has(id)) {
+			return fail(409, { message: 'This request is already being processed.' });
+		}
+		inFlightRequests.add(id);
+		try {
+			return await action(event);
+		} finally {
+			inFlightRequests.delete(id);
+		}
+	};
+}
 
 const VALID_STATUSES: (RequestStatus | 'all')[] = ['pending', 'approved', 'rejected', 'all'];
 
@@ -134,7 +159,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
 };
 
 export const actions: Actions = {
-	resolveRequest: async ({ request, locals, url }) => {
+	resolveRequest: oneAtATime('id', async ({ request, locals, url }) => {
 		if (!locals.user?.isAdmin) return fail(403, { message: 'Admin access required.' });
 
 		const pool = getPool(env.LOCAL_DATABASE_URL);
@@ -211,9 +236,9 @@ export const actions: Actions = {
 		).catch(() => {});
 
 		return { success: true };
-	},
+	}),
 
-	createArea: async ({ request, locals, url }) => {
+	createArea: oneAtATime('requestId', async ({ request, locals, url }) => {
 		if (!locals.user?.isAdmin) return fail(403, { message: 'Admin access required.' });
 
 		const pool = getPool(env.LOCAL_DATABASE_URL);
@@ -478,7 +503,7 @@ export const actions: Actions = {
 		).catch(() => {});
 
 		return { success: true, areaId: newAreaId, areaName: name, temporaryWarning, bootstrap };
-	},
+	}),
 
 	updateRequestGeofence: async ({ request, locals }) => {
 		if (!locals.user?.isAdmin) return fail(403, { message: 'Admin access required.' });

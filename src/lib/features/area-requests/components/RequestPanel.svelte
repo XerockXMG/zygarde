@@ -11,6 +11,7 @@
 	import { editState } from '$lib/features/map/stores/editState.svelte';
 	import type { RequestSummary } from '$lib/features/area-requests/server/requests';
 	import { addDays, todayInZone } from '$lib/features/area-requests/dates';
+	import { MAX_REQUEST_NOTE_LENGTH } from '$lib/features/area-requests/limits';
 
 	let { myRequests, loggedIn }: { myRequests: RequestSummary[]; loggedIn: boolean } = $props();
 
@@ -176,6 +177,7 @@
 						class="note-area"
 						placeholder="Explain why you're requesting this change…"
 						bind:value={note}
+						maxlength={MAX_REQUEST_NOTE_LENGTH}
 						rows="4"></textarea>
 				</div>
 

@@ -19,6 +19,7 @@ import { calcAreaSqKm, geoJsonToLatLngs } from '../geometry';
 import { editState } from './editState.svelte';
 import { voteState } from '$lib/features/voting/stores/voteState.svelte';
 import { spawnpointState } from '$lib/features/spawnpoints/stores/spawnpointState.svelte';
+import { escapeHtml } from '$lib/utils/html';
 
 /** Smooth-scroll the area card for `id` into view within the list panel. */
 function scrollToArea(id: number): void {
@@ -27,17 +28,6 @@ function scrollToArea(id: number): void {
 			.getElementById('area-card-' + id)
 			?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 	}, 50);
-}
-
-function escapeHtml(s: string): string {
-	const map: Record<string, string> = {
-		'&': '&amp;',
-		'<': '&lt;',
-		'>': '&gt;',
-		'"': '&quot;',
-		"'": '&#39;'
-	};
-	return s.replace(/[&<>"']/g, (c) => map[c]);
 }
 
 class MapStateClass {

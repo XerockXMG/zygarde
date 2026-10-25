@@ -28,6 +28,7 @@
 	import type { AreaMapSummary } from '$lib/features/area-requests/types';
 	import type { TileSettings } from '$lib/features/map/server/tileSettings';
 	import type { MapStartView } from '$lib/features/map/server/startView';
+	import { escapeHtml } from '$lib/utils/html';
 
 	let {
 		areas,
@@ -124,7 +125,7 @@
 					weight: area.enabled ? 2 : 1,
 					interactive: false
 				})
-					.bindTooltip(area.name, { sticky: true })
+					.bindTooltip(escapeHtml(area.name), { sticky: true })
 					.addTo(bgGroup);
 			}
 		}

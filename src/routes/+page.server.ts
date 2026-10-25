@@ -54,6 +54,11 @@ import {
 } from '$lib/features/area-requests/server/requests';
 import { tempAreaToday } from '$lib/features/area-requests/server/timezone';
 import { validateTemporaryDates } from '$lib/features/area-requests/dates';
+import {
+	MAX_PENDING_REQUESTS,
+	MAX_REQUEST_NOTE_LENGTH,
+	requestGeofenceProblem
+} from '$lib/features/area-requests/limits';
 import { sendRequestWebhook } from '$lib/features/area-requests/server/discord';
 import {
 	getTileSettings,
@@ -67,7 +72,11 @@ import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseRouteText } from '$lib/features/area-management/server/koji';
 import { syncGeofenceToKoji } from '$lib/features/area-management/server/kojiGeofenceSync';
-import type { GeoJsonGeometry, KojiSyncResult } from '$lib/features/area-management/types';
+import type {
+	GeoJsonGeometry,
+	GeoJsonPolygon,
+	KojiSyncResult
+} from '$lib/features/area-management/types';
 
 const TOGGLE_FIELDS: ToggleField[] = [
 	'enabled',
@@ -796,6 +805,11 @@ export const actions: Actions = {
 		if (typeof note !== 'string' || !note.trim()) {
 			return fail(400, { message: 'A note explaining your request is required.' });
 		}
+		if (note.length > MAX_REQUEST_NOTE_LENGTH) {
+			return fail(400, {
+				message: `Note is too long (max ${MAX_REQUEST_NOTE_LENGTH} characters).`
+			});
+		}
 		if (typeof geofenceRaw !== 'string' || !geofenceRaw.trim()) {
 			return fail(400, { message: 'Geofence is required.' });
 		}
@@ -810,6 +824,19 @@ export const actions: Actions = {
 		if (type === 'addition' && !isValidPolygonGeoJson(parsed)) {
 			return fail(400, {
 				message: 'Geofence must be a GeoJSON Polygon with at least 3 distinct coordinate pairs.'
+			});
+		}
+		if (type === 'addition') {
+			const problem = requestGeofenceProblem(parsed as GeoJsonPolygon);
+			if (problem) return fail(400, { message: problem });
+		}
+
+		const pending = (await listMyRequests(executor, locals.user.discordId)).filter(
+			(r) => r.status === 'pending'
+		).length;
+		if (pending >= MAX_PENDING_REQUESTS) {
+			return fail(429, {
+				message: `You already have ${MAX_PENDING_REQUESTS} pending requests. Wait for those to be reviewed.`
 			});
 		}
 		if (

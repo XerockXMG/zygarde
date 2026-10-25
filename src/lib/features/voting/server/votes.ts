@@ -164,8 +164,37 @@ export class TokenBudgetExceededError extends Error {
 	}
 }
 
+// Per-user serialization for budget-checked writes. The budget check and the write
+// are separate queries, so without this, parallel requests from one user (spread over
+// different areas) all pass the check against the same stale total and overspend.
+// In-process only: run a single Zygarde instance per database.
+const userChains = new Map<string, Promise<unknown>>();
+
+function withUserLock<T>(discordId: string, fn: () => Promise<T>): Promise<T> {
+	const next = (userChains.get(discordId) ?? Promise.resolve()).catch(() => {}).then(fn);
+	userChains.set(discordId, next);
+	next
+		.finally(() => {
+			if (userChains.get(discordId) === next) userChains.delete(discordId);
+		})
+		.catch(() => {});
+	return next;
+}
+
 /** Returns the amount the user previously had on this area (0 if none). */
-export async function allocateTokens(
+export function allocateTokens(
+	executor: QueryExecutor,
+	areaId: number,
+	discordId: string,
+	username: string,
+	amount: number
+): Promise<number> {
+	return withUserLock(discordId, () =>
+		allocateTokensUnlocked(executor, areaId, discordId, username, amount)
+	);
+}
+
+async function allocateTokensUnlocked(
 	executor: QueryExecutor,
 	areaId: number,
 	discordId: string,
@@ -213,7 +242,16 @@ export async function allocateTokens(
 }
 
 /** Returns true if a token had to be auto-allocated to make the area primary. */
-export async function setPrimary(
+export function setPrimary(
+	executor: QueryExecutor,
+	areaId: number,
+	discordId: string,
+	username: string
+): Promise<boolean> {
+	return withUserLock(discordId, () => setPrimaryUnlocked(executor, areaId, discordId, username));
+}
+
+async function setPrimaryUnlocked(
 	executor: QueryExecutor,
 	areaId: number,
 	discordId: string,
@@ -231,7 +269,7 @@ export async function setPrimary(
 
 	const autoAllocated = existing.length === 0;
 	if (autoAllocated) {
-		await allocateTokens(executor, areaId, discordId, username, 1);
+		await allocateTokensUnlocked(executor, areaId, discordId, username, 1);
 	}
 
 	await executor.execute(

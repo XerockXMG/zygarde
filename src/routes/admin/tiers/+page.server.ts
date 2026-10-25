@@ -19,6 +19,8 @@ import {
 } from '$lib/features/voting/server/settings';
 import type { PageServerLoad, Actions } from './$types';
 
+const DISCORD_ID_RE = /^\d{17,20}$/;
+
 export const load: PageServerLoad = async ({ locals }) => {
 	if (!locals.user?.isAdmin) error(403, 'Admin access required.');
 
@@ -42,7 +44,12 @@ export const actions: Actions = {
 		const discordId = form.get('discordId');
 		const tierName = form.get('tierName');
 
-		if (typeof discordId !== 'string' || !discordId || typeof tierName !== 'string' || !tierName) {
+		if (
+			typeof discordId !== 'string' ||
+			!DISCORD_ID_RE.test(discordId) ||
+			typeof tierName !== 'string' ||
+			!tierName
+		) {
 			return fail(400, { message: 'Invalid request.' });
 		}
 
@@ -70,7 +77,8 @@ export const actions: Actions = {
 		const form = await request.formData();
 		const discordId = form.get('discordId');
 
-		if (typeof discordId !== 'string' || !discordId) {
+		// Validated before it's interpolated into a Discord API path (fetchGuildRoles)
+		if (typeof discordId !== 'string' || !DISCORD_ID_RE.test(discordId)) {
 			return fail(400, { message: 'Invalid request.' });
 		}
 

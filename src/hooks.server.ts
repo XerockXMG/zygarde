@@ -10,6 +10,7 @@ import {
 } from '$lib/server/scheduler';
 import { logger } from '$lib/server/logger';
 import { buildHeadTags, HEAD_PLACEHOLDER } from '$lib/server/pageHead';
+import { parseCsvIds } from '$lib/utils/csv';
 
 const pool = getPool(env.LOCAL_DATABASE_URL);
 if (pool) {
@@ -32,8 +33,18 @@ export const handle: Handle = async ({ event, resolve }) => {
 	if (sessionId) {
 		event.locals.user = await getSessionStore(env.LOCAL_DATABASE_URL).get(sessionId);
 	}
+	// Admin is re-derived from the current ADMIN_DISCORD_IDS on every request, not
+	// trusted from the session snapshot, so removing an ID takes effect on restart.
+	if (event.locals.user) {
+		event.locals.user.isAdmin = parseCsvIds(env.ADMIN_DISCORD_IDS).includes(
+			event.locals.user.discordId
+		);
+	}
 
-	if (event.url.pathname.startsWith('/admin') && !event.locals.user?.isAdmin) {
+	// route.id is matched against the decoded path, so /%61dmin can't slip past.
+	const isAdminRoute =
+		event.route.id?.startsWith('/admin') || event.url.pathname.startsWith('/admin');
+	if (isAdminRoute && !event.locals.user?.isAdmin) {
 		error(403, 'Admin access required.');
 	}
 

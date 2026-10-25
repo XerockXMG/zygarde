@@ -217,6 +217,38 @@ describe('allocateTokens', () => {
 		expect(executor.execute).toHaveBeenCalledTimes(3);
 	});
 
+	it('serializes parallel allocations from one user so the budget cannot be overspent', async () => {
+		// A tiny in-memory area_votes table; each query yields to the event loop first so
+		// unserialized calls would interleave their budget checks.
+		const votes = new Map<number, number>();
+		const tick = () => new Promise((r) => setTimeout(r, 0));
+		const executor: QueryExecutor = {
+			execute: vi.fn(async (sql: string, params?: unknown[]) => {
+				await tick();
+				if (sql.includes('FROM user_tiers')) return [[{ weight: 3 }], undefined];
+				if (sql.includes('SUM(amount)')) {
+					const total = [...votes.values()].reduce((a, b) => a + b, 0);
+					return [[{ total }], undefined];
+				}
+				if (sql.startsWith('SELECT amount FROM area_votes')) {
+					const amount = votes.get(params![0] as number);
+					return [amount === undefined ? [] : [{ amount }], undefined];
+				}
+				if (sql.includes('INSERT INTO area_votes')) {
+					votes.set(params![0] as number, params![3] as number);
+				}
+				return [{}, undefined];
+			}) as unknown as QueryExecutor['execute']
+		};
+
+		const results = await Promise.allSettled(
+			[1, 2, 3, 4, 5].map((areaId) => allocateTokens(executor, areaId, 'u1', 'tester', 3))
+		);
+
+		expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+		expect([...votes.values()].reduce((a, b) => a + b, 0)).toBe(3);
+	});
+
 	it('deletes the allocation and cascades to area_primary when amount is 0', async () => {
 		const executor = fakeExecutor();
 		executor.execute
